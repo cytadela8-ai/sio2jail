@@ -203,14 +203,32 @@ void PerfListener::onPostForkParent(pid_t childPid) {
         // FilesListener) so it isn't very bad to not use it on newer kernels
         // (and add it with fcnlt) until we implement some linux version
         // discovery.
-        int perfFd = withErrnoCheck(
-                "perf event open",
-                perf_event_open,
-                &attrs,
-                childPid,
-                -1,
-                -1,
-                PERF_FLAG_FD_NO_GROUP /* | PERF_FLAG_FD_CLOEXEC */);
+        int perfFd;
+        try {
+            perfFd = withErrnoCheck(
+                    "perf_event_open",
+                    perf_event_open,
+                    &attrs,
+                    childPid,
+                    -1,
+                    -1,
+                    PERF_FLAG_FD_NO_GROUP /* | PERF_FLAG_FD_CLOEXEC */);
+        }
+        catch (const SystemException& ex) {
+            if (ex.getErrno() != EACCES && ex.getErrno() != EPERM) {
+                throw;
+            }
+            throw Exception(
+                    std::string(ex.what()) +
+                    "\nsio2jail needs permission to count user-space CPU instructions."
+                    "\nCheck: sysctl kernel.perf_event_paranoid"
+                    "\nIf the value is greater than 2, an administrator can allow "
+                    "per-process user-space counters with:"
+                    "\n  sudo sysctl -w kernel.perf_event_paranoid=2"
+                    "\nThis also allows other users to profile their own processes."
+                    "\nIf access is still denied, check container security policies "
+                    "or ask the administrator about CAP_PERFMON.");
+        }
         withErrnoCheck(
                 "set cloexec flag on perfFd", fcntl, F_SETFD, FD_CLOEXEC);
         if (instructionCountLimit_ != 0) {
